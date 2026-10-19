@@ -57,10 +57,11 @@ COPY --from=systemd-builder /home/builder/out/ /tmp/pkgs/
 
 # Update base system and install key packages
 RUN pacman -Syu --noconfirm && \
-    pacman -U --noconfirm /tmp/pkgs/*.pkg.tar.zst && \
+    sed 's/^SigLevel.*/SigLevel = Never/' /etc/pacman.conf > /tmp/pacman-nosig.conf && \
+    pacman --config /tmp/pacman-nosig.conf -U --noconfirm /tmp/pkgs/*.pkg.tar.* && \
     sed -i 's/^#\?IgnorePkg.*/IgnorePkg = systemd systemd-libs systemd-sysvcompat/' /etc/pacman.conf && \
     grep -q '^IgnorePkg' /etc/pacman.conf && \
-    rm -rf /tmp/pkgs
+    rm -rf /tmp/pacman-nosig.conf /tmp/pkgs
 
 RUN pacman -S --noconfirm \
     # Core utilities
