@@ -1,63 +1,80 @@
 # Dockerfile (Arch Linux Base)
 # Stage 1: Build and customize the rootfs for development (Base - Arch Linux)
 ARG TARGETPLATFORM
+ARG SYSTEMD_TAG=257.8-1
+
+FROM ogarcia/archlinux AS systemd-builder
+ARG SYSTEMD_TAG
+RUN pacman -Syu --noconfirm base-devel git meson sudo && \
+    useradd -m builder && \
+    echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+USER builder
+WORKDIR /home/builder
+
+# 1. Fetch the packaging repo
+RUN git clone https://gitlab.archlinux.org/archlinux/packaging/packages/systemd.git && \
+    cd systemd && git checkout "$SYSTEMD_TAG" && \
+    grep '^pkgver' PKGBUILD
+
+# 2. Adapt the PKGBUILD for aarch64
+RUN cd systemd && sed -i \
+      -e "s/ 'lib32-gcc-libs'//" \
+      -e "s/ 'linux-headers'//" \
+      -e 's/-Dbpf-framework=enabled/-Dbpf-framework=disabled/' \
+      -e '/-Dvmlinux-h/d' \
+      -e 's/-Dbootloader=enabled/-Dbootloader=disabled/' \
+      PKGBUILD
+
+# 3. Download and extract the upstream source (no build yet)
+RUN cd systemd && makepkg -odA --noconfirm --skippgpcheck
+
+# 4. Patch the extracted source (this is the snippet you asked about)
+RUN cd systemd && \
+    sed -i 's/-Werror=override-init/-Wno-error=override-init/' src/systemd/meson.build && \
+    grep -q 'Wno-error=override-init' src/systemd/meson.build && \
+    grep -n 'XMLParser' src/systemd/tools/xml_helper.py && \
+    sed -i 's/XMLParser(/XMLParser(load_dtd=True, /' src/systemd/tools/xml_helper.py && \
+    grep -q 'load_dtd=True' src/systemd/tools/xml_helper.py
+
+# 5. Compile and package
+RUN cd systemd && MAKEFLAGS="-j$(nproc)" makepkg -esA --noconfirm --nocheck --skippgpcheck
+
+# 6. Show what was produced
+RUN ls -l /home/builder/systemd/*.pkg.tar.zst
+
 FROM ogarcia/archlinux AS customizer
+
+COPY --from=systemd-builder /home/builder/systemd/systemd-257*.pkg.tar.zst \
+                            /home/builder/systemd/systemd-libs-257*.pkg.tar.zst \
+                            /home/builder/systemd/systemd-sysvcompat-257*.pkg.tar.zst \
+                            /tmp/pkgs/
 
 # Update base system and install key packages
 RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm \
+    pacman -U --noconfirm /tmp/pkgs/*.pkg.tar.zst && \
+    sed -i 's/^#\?IgnorePkg.*/IgnorePkg = systemd systemd-libs systemd-sysvcompat/' /etc/pacman.conf && \
+    grep -q '^IgnorePkg' /etc/pacman.conf && \
+    rm -rf /tmp/pkgs
+
+RUN pacman -S --noconfirm \
     # Core utilities
-    bash \
-    dialog \
-    coreutils \
-    file \
-    findutils \
-    grep \
-    sed \
-    gawk \
-    curl \
-    wget \
-    ca-certificates \
-    bash-completion \
-    # systemd includes udev, networkd, resolved
-    systemd \
+    bash dialog coreutils file findutils grep sed \
+    gawk curl wget ca-certificates bash-completion \
+    # do not install systemd
     dbus \
     # System tools
-    htop \
-    vim \
-    nano \
-    git \
-    sudo \
-    openssh \
-    net-tools \
-    iptables \
-    iputils \
-    iproute2 \
-    bind \
-    usbutils \
-    pciutils \
-    lsof \
-    psmisc \
-    procps-ng \
-    fastfetch \
-    kmod \
+    htop vim nano git sudo openssh net-tools iptables \
+    iputils iproute2 bind usbutils pciutils lsof psmisc \
+    procps-ng fastfetch kmod \
     # Logging & Rotation
     logrotate \
     # Development tools
-    base-devel \
-    cmake \
-    git \
-    clang \
-    llvm \
-    valgrind \
-    strace \
-    ltrace \
+    base-devel cmake git clang llvm \
+    valgrind strace ltrace \
     # Python
-    python \
-    python-pip \
+    python python-pip \
     # Docker
-    docker \
-    docker-compose \
+    docker docker-compose \
     && pacman -Scc --noconfirm
 
 # Copy our bashrc script to the rootfs
@@ -197,6 +214,9 @@ EOF_RUN
 # Final cleanup
 RUN pacman -Scc --noconfirm && \
     rm -rf /var/cache/pacman/pkg/*
+    
+RUN systemctl --version | head -1 | grep -q 'systemd 257' && \
+        pacman -Q systemd systemd-libs
 
 # Stage 2: Export to scratch for extraction
 FROM scratch AS export
