@@ -13,8 +13,7 @@ WORKDIR /home/builder
 
 # 1. Fetch the packaging repo
 RUN git clone https://gitlab.archlinux.org/archlinux/packaging/packages/systemd.git && \
-    cd systemd && git checkout "$SYSTEMD_TAG" && \
-    grep '^pkgver' PKGBUILD
+    cd systemd && git checkout "$SYSTEMD_TAG"
 
 # 2. Adapt the PKGBUILD for aarch64
 RUN cd systemd && sed -i \
@@ -43,15 +42,18 @@ RUN cd systemd && \
 # 5. Compile and package
 RUN cd systemd && MAKEFLAGS="-j$(nproc)" makepkg -esA --noconfirm --nocheck --skippgpcheck
 
-# 6. Show what was produced
-RUN ls -l /home/builder/systemd/*.pkg.tar.zst
+# 6. Collect the three packages we need into a known directory
+RUN mkdir -p /home/builder/out && \
+    find /home/builder -type f \
+        \( -name 'systemd-257*.pkg.tar.*' \
+           -o -name 'systemd-libs-257*.pkg.tar.*' \
+           -o -name 'systemd-sysvcompat-257*.pkg.tar.*' \) \
+        -exec cp -v {} /home/builder/out/ \; && \
+    ls /home/builder/out/* > /dev/null
 
 FROM ogarcia/archlinux AS customizer
 
-COPY --from=systemd-builder /home/builder/systemd/systemd-257*.pkg.tar.zst \
-                            /home/builder/systemd/systemd-libs-257*.pkg.tar.zst \
-                            /home/builder/systemd/systemd-sysvcompat-257*.pkg.tar.zst \
-                            /tmp/pkgs/
+COPY --from=systemd-builder /home/builder/out/ /tmp/pkgs/
 
 # Update base system and install key packages
 RUN pacman -Syu --noconfirm && \
