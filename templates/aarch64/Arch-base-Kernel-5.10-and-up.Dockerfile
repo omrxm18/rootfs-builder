@@ -23,7 +23,11 @@ RUN cd systemd && sed -i \
       -e 's/-Dbpf-framework=enabled/-Dbpf-framework=disabled/' \
       -e '/-Dvmlinux-h/d' \
       -e 's/-Dbootloader=enabled/-Dbootloader=disabled/' \
-      PKGBUILD
+      -e 's/-Dman=enabled/-Dman=disabled/' \
+      -e '/^  meson install -C build/a\  mkdir -p "$pkgdir"/usr/share/man/{man1,man3,man8}\n  touch "$pkgdir"/usr/share/man/man1/{ukify,resolvconf}.1 "$pkgdir"/usr/share/man/man8/{halt,poweroff,reboot,shutdown}.8' \
+      -e '/^package_systemd-sysvcompat() {/a\  mkdir -p build/man; touch build/man/{halt,poweroff,reboot,shutdown}.8' \
+      PKGBUILD && \
+    grep -n 'Dman=\|touch' PKGBUILD
 
 # 3. Download and extract the upstream source (no build yet)
 RUN cd systemd && makepkg -odA --noconfirm --skippgpcheck
