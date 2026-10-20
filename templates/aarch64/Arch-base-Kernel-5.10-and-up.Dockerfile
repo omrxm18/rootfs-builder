@@ -29,7 +29,11 @@ RUN cd systemd && sed -i \
     grep -n 'Dman=\|touch' PKGBUILD
 
 # 3. Download and extract the upstream source (no build yet)
-RUN cd systemd && makepkg -odA --noconfirm --skippgpcheck
+RUN cd systemd && \
+    # workaround for systemd-networkd
+    find . -iname "networkd-manager.c" -exec \
+    sed -i 's/(r == -EINVAL && mac_selinux_enforcing())/r == -EINVAL/' {} \; && \
+    makepkg -odA --noconfirm --skippgpcheck
 
 # 4. Patch the extracted source (this is the snippet you asked about)
 RUN cd systemd && \
