@@ -1,7 +1,60 @@
 # Dockerfile (Arch Linux - bspwm GUI)
 # Stage 1: Build and customize the rootfs for development
 ARG TARGETPLATFORM
+ARG SYSTEMD_TAG=257.8-1
+
+FROM ogarcia/archlinux AS systemd-builder
+ARG SYSTEMD_TAG
+RUN pacman -Syu --noconfirm base-devel git meson sudo && \
+    useradd -m builder && \
+    echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+USER builder
+WORKDIR /home/builder
+
+# 1. Fetch the packaging repo
+RUN git clone https://gitlab.archlinux.org/archlinux/packaging/packages/systemd.git && \
+    cd systemd && git checkout "$SYSTEMD_TAG"
+
+# 2. Adapt the PKGBUILD for aarch64
+RUN cd systemd && sed -i \
+      -e "s/ 'lib32-gcc-libs'//" \
+      -e "s/ 'linux-headers'//" \
+      -e 's/-Dbpf-framework=enabled/-Dbpf-framework=disabled/' \
+      -e '/-Dvmlinux-h/d' \
+      -e 's/-Dbootloader=enabled/-Dbootloader=disabled/' \
+      -e 's/-Dman=enabled/-Dman=disabled/' \
+      -e '/^  meson install -C build/a\  mkdir -p "$pkgdir"/usr/share/man/{man1,man3,man8}\n  touch "$pkgdir"/usr/share/man/man1/{ukify,resolvconf}.1 "$pkgdir"/usr/share/man/man8/{halt,poweroff,reboot,shutdown}.8' \
+      -e '/^package_systemd-sysvcompat() {/a\  mkdir -p build/man; touch build/man/{halt,poweroff,reboot,shutdown}.8' \
+      PKGBUILD && \
+    grep -n 'Dman=\|touch' PKGBUILD
+
+# 3. Download and extract the upstream source (no build yet)
+RUN cd systemd && \
+    makepkg -odA --noconfirm --skippgpcheck
+
+# 4. Patch the extracted source (this is the snippet you asked about)
+RUN cd systemd && \
+    sed -i 's/-Werror=override-init/-Wno-error=override-init/' src/systemd/meson.build && \
+    grep -q 'Wno-error=override-init' src/systemd/meson.build && \
+    grep -n 'XMLParser' src/systemd/tools/xml_helper.py && \
+    sed -i 's/XMLParser(/XMLParser(load_dtd=True, /' src/systemd/tools/xml_helper.py && \
+    grep -q 'load_dtd=True' src/systemd/tools/xml_helper.py
+
+# 5. Compile and package
+RUN cd systemd && MAKEFLAGS="-j$(nproc)" makepkg -esA --noconfirm --nocheck --skippgpcheck
+
+# 6. Collect the three packages we need into a known directory
+RUN mkdir -p /home/builder/out && \
+    find /home/builder -type f \
+        \( -name 'systemd-257*.pkg.tar.*' \
+           -o -name 'systemd-libs-257*.pkg.tar.*' \
+           -o -name 'systemd-sysvcompat-257*.pkg.tar.*' \) \
+        -exec cp -v {} /home/builder/out/ \; && \
+    ls /home/builder/out/* > /dev/null
+
 FROM ogarcia/archlinux AS customizer
+
+COPY --from=systemd-builder /home/builder/out/ /tmp/pkgs/
 
 # Copy custom scripts first
 COPY scripts/download-firmware /usr/local/bin/
@@ -15,8 +68,15 @@ RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh
 # Update base system and install everything in a single layer.
 # The container never runs an X server of its own - Termux:X11 provides it over
 # /tmp/.X11-unix - so only X client libraries and the tools the theme calls are needed.
+# Update base system and install key packages
 RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm \
+    sed 's/^SigLevel.*/SigLevel = Never/' /etc/pacman.conf > /tmp/pacman-nosig.conf && \
+    pacman --config /tmp/pacman-nosig.conf -U --noconfirm /tmp/pkgs/*.pkg.tar.* && \
+    sed -i 's/^#\?IgnorePkg.*/IgnorePkg = systemd systemd-libs systemd-sysvcompat/' /etc/pacman.conf && \
+    grep -q '^IgnorePkg' /etc/pacman.conf && \
+    rm -rf /tmp/pacman-nosig.conf /tmp/pkgs
+
+RUN pacman -S --noconfirm \
     # Core utilities
     bash \
     dialog \

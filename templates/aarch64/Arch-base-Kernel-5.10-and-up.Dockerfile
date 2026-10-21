@@ -140,8 +140,10 @@ grep -q '^_apt:' /etc/passwd && usermod -g aid_inet _apt || true
 # Mask problematic services for Android kernels
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 ln -sf /dev/null /etc/systemd/system/systemd-journald-audit.socket
+
 # dhcpcd replacing systemd-networkd
-ln -sf /usr/lib/systemd/system/dhcpcd@.service /etc/systemd/system/multi.user-target.wants/dhcpcd@eth0.service
+ln -sf /usr/lib/systemd/system/dhcpcd@.service /etc/systemd/system/multi-user.target.wants/dhcpcd@eth0.service
+
 # mask networkd, replacement above
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
