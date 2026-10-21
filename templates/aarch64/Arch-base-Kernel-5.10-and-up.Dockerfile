@@ -30,9 +30,6 @@ RUN cd systemd && sed -i \
 
 # 3. Download and extract the upstream source (no build yet)
 RUN cd systemd && \
-    # workaround for systemd-networkd
-    find . -iname "networkd-manager.c" -exec \
-    sed -i 's/(r == -EINVAL && mac_selinux_enforcing())/r == -EINVAL/' {} \; && \
     makepkg -odA --noconfirm --skippgpcheck
 
 # 4. Patch the extracted source (this is the snippet you asked about)
@@ -75,7 +72,7 @@ RUN pacman -S --noconfirm \
     dbus \
     # System tools
     htop vim nano git sudo openssh net-tools iptables \
-    iputils iproute2 bind usbutils pciutils lsof psmisc \
+    iputils iproute2 bind usbutils pciutils lsof psmisc dhcpcd \
     procps-ng fastfetch kmod \
     # Logging & Rotation
     logrotate \
@@ -143,6 +140,15 @@ grep -q '^_apt:' /etc/passwd && usermod -g aid_inet _apt || true
 # Mask problematic services for Android kernels
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 ln -sf /dev/null /etc/systemd/system/systemd-journald-audit.socket
+# dhcpcd replacing systemd-networkd
+ln -sf /usr/lib/systemd/system/dhcpcd@.service /etc/systemd/system/multi.user-target.wants/dhcpcd@eth0.service
+# mask networkd, replacement above
+ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
+ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
+
+# dhcpcd.conf
+echo "allowinterfaces eth0" >> /etc/dhcpcd.conf
+echo "nohook resolv.conf" >> /etc/dhcpcd.conf # let systemd-resolvd take control over /etc/resolv.conf
 
 # Journald configuration (skip Audit, KMsg, etc)
 cat >> /etc/systemd/journald.conf << 'EOT'
