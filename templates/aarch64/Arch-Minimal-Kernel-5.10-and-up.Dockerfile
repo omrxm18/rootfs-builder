@@ -36,9 +36,7 @@ RUN cd systemd && \
 RUN cd systemd && \
     sed -i 's/-Werror=override-init/-Wno-error=override-init/' src/systemd/meson.build && \
     grep -q 'Wno-error=override-init' src/systemd/meson.build && \
-    grep -n 'XMLParser' src/systemd/tools/xml_helper.py && \
-    sed -i 's/XMLParser(/XMLParser(load_dtd=True, /' src/systemd/tools/xml_helper.py && \
-    grep -q 'load_dtd=True' src/systemd/tools/xml_helper.py
+    grep -n 'XMLParser' src/systemd/tools/xml_helper.py
 
 # 5. Compile and package
 RUN cd systemd && MAKEFLAGS="-j$(nproc)" makepkg -esA --noconfirm --nocheck --skippgpcheck
@@ -83,6 +81,7 @@ RUN pacman -S --noconfirm \
     iputils \
     iproute2 \
     bind \
+    dhcpcd \
     # Logging & Rotation
     logrotate \
     # Procps-ng for system monitoring
@@ -145,9 +144,6 @@ grep -q '^_apt:' /etc/passwd && usermod -g aid_inet _apt || true
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 ln -sf /dev/null /etc/systemd/system/systemd-journald-audit.socket
 
-# dhcpcd replacing systemd-networkd
-ln -sf /usr/lib/systemd/system/dhcpcd@.service /etc/systemd/system/multi-user.target.wants/dhcpcd@eth0.service
-
 # mask networkd, replacement above
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
@@ -176,11 +172,14 @@ EOT
 # Enable essential services
 mkdir -p /etc/systemd/system/multi-user.target.wants
 GUEST_SYSTEMD_PATH="/usr/lib/systemd/system"
-for service in dbus.service systemd-udevd.service systemd-resolved.service systemd-networkd.service NetworkManager.service; do
+for service in dbus.service systemd-udevd.service systemd-resolved.service NetworkManager.service; do
     if [ -f "$GUEST_SYSTEMD_PATH/$service" ]; then
         ln -sf "$GUEST_SYSTEMD_PATH/$service" "/etc/systemd/system/multi-user.target.wants/$service"
     fi
 done
+
+# dhcpcd replacing systemd-networkd
+ln -sf /usr/lib/systemd/system/dhcpcd@.service /etc/systemd/system/multi-user.target.wants/dhcpcd@eth0.service
 
 # Disable power button handling in systemd-logind
 mkdir -p /etc/systemd/logind.conf.d
@@ -221,6 +220,13 @@ ExecCondition=/bin/sh -c "grep -q '^net_mode=' /run/droidspaces/container.config
 EOF
     fi
 done
+
+mkdir -p /etc/systemd/system/dhcpcd@.service.d
+cat > /etc/systemd/system/dhcpcd@.service.d/99-netmode-limit.conf << 'EOF'
+[Service]
+ExecCondition=
+ExecCondition=/bin/sh -c "grep -q '^net_mode=' /run/droidspaces/container.config && ! grep -qE '^net_mode=(host|none)$' /run/droidspaces/container.config"
+EOF
 
 # Configure logrotate for Android
 if [ -f /etc/logrotate.conf ]; then

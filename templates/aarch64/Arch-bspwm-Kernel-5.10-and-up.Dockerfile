@@ -25,8 +25,7 @@ RUN cd systemd && sed -i \
       -e 's/-Dman=enabled/-Dman=disabled/' \
       -e '/^  meson install -C build/a\  mkdir -p "$pkgdir"/usr/share/man/{man1,man3,man8}\n  touch "$pkgdir"/usr/share/man/man1/{ukify,resolvconf}.1 "$pkgdir"/usr/share/man/man8/{halt,poweroff,reboot,shutdown}.8' \
       -e '/^package_systemd-sysvcompat() {/a\  mkdir -p build/man; touch build/man/{halt,poweroff,reboot,shutdown}.8' \
-      PKGBUILD && \
-    grep -n 'Dman=\|touch' PKGBUILD
+      PKGBUILD
 
 # 3. Download and extract the upstream source (no build yet)
 RUN cd systemd && \
@@ -36,9 +35,7 @@ RUN cd systemd && \
 RUN cd systemd && \
     sed -i 's/-Werror=override-init/-Wno-error=override-init/' src/systemd/meson.build && \
     grep -q 'Wno-error=override-init' src/systemd/meson.build && \
-    grep -n 'XMLParser' src/systemd/tools/xml_helper.py && \
-    sed -i 's/XMLParser(/XMLParser(load_dtd=True, /' src/systemd/tools/xml_helper.py && \
-    grep -q 'load_dtd=True' src/systemd/tools/xml_helper.py
+    grep -n 'XMLParser' src/systemd/tools/xml_helper.py
 
 # 5. Compile and package
 RUN cd systemd && MAKEFLAGS="-j$(nproc)" makepkg -esA --noconfirm --nocheck --skippgpcheck
@@ -92,8 +89,7 @@ RUN pacman -S --noconfirm \
     wget \
     ca-certificates \
     bash-completion \
-    # systemd includes udev, networkd, resolved
-    systemd \
+    # do not install systemd
     dbus \
     # Compression tools
     zip \
@@ -126,6 +122,7 @@ RUN pacman -S --noconfirm \
     kmod \
     # Wireless networking tools for hotspot functionality
     iw \
+    dhcpcd \
     # Logging & Rotation
     logrotate \
     # Python (python-xlib and python-gobject drive the applets)
@@ -328,6 +325,17 @@ grep -q '^_apt:' /etc/passwd && usermod -g aid_inet _apt || true
 # Mask problematic services for Android kernels
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 ln -sf /dev/null /etc/systemd/system/systemd-journald-audit.socket
+
+# dhcpcd replacing systemd-networkd
+ln -sf /usr/lib/systemd/system/dhcpcd@.service /etc/systemd/system/multi-user.target.wants/dhcpcd@eth0.service
+
+# mask networkd, replacement above
+ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
+ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
+
+# dhcpcd.conf
+echo "allowinterfaces eth0" >> /etc/dhcpcd.conf
+echo "nohook resolv.conf" >> /etc/dhcpcd.conf # let systemd-resolvd take control over /etc/resolv.conf
 
 # Journald configuration (skip Audit, KMsg, etc)
 cat >> /etc/systemd/journald.conf << 'EOT'
